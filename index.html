@@ -57,6 +57,12 @@ h2{margin:0 0 10px;font-size:.78rem;font-weight:600;text-transform:uppercase;let
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .chip.op{font-family:var(--f-num);font-size:1.25rem;min-width:56px;padding:0 16px}
 .chip.op small{font-family:var(--f-ui);font-size:.8rem;margin-left:6px;font-weight:500}
+.contents{display:contents}
+.custom{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 12px 0 14px;border-radius:999px;background:var(--chip);font-weight:500;cursor:text}
+.custom.on{background:var(--accent);color:var(--accent-ink)}
+.custom input{width:4.4em;font:inherit;font-size:16px;font-variant-numeric:tabular-nums;text-align:center;border:1px solid var(--line);border-radius:999px;padding:5px 8px;background:var(--surface);color:var(--ink);-moz-appearance:textfield}
+.custom input::-webkit-inner-spin-button,.custom input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.custom input:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
 .seg{display:inline-flex;background:var(--chip);border-radius:999px;padding:4px;gap:4px;align-self:flex-start}
 .seg button{border:0;background:transparent;border-radius:999px;min-height:38px;padding:0 16px;font-weight:500}
 .seg button[aria-pressed="true"]{background:var(--surface);box-shadow:0 1px 3px rgba(0,0,0,.15)}
@@ -191,7 +197,11 @@ h2{margin:0 0 10px;font-size:.78rem;font-weight:600;text-transform:uppercase;let
 
       <div class="group">
         <h2>Game</h2>
-        <div class="chips" id="modes"></div>
+        <div class="seg" id="modeKind"></div>
+        <div class="chips" id="modeRow">
+          <span id="modes" class="contents"></span>
+          <label class="custom" id="customBox"><span>Other</span><input id="customN" type="number" inputmode="numeric" min="1" step="1" aria-label="Custom amount"><span id="customUnit">min</span></label>
+        </div>
         <p class="sub" id="modeNote"></p>
       </div>
 
@@ -270,11 +280,15 @@ h2{margin:0 0 10px;font-size:.78rem;font-weight:600;text-transform:uppercase;let
 (() => {
 const $ = s => document.querySelector(s);
 const OPS = { add:{sym:'+',name:'Add'}, sub:{sym:'−',name:'Subtract'}, mul:{sym:'×',name:'Multiply'}, div:{sym:'÷',name:'Divide'} };
-const MODES = [['t60','1 min'],['t120','2 min'],['t300','5 min'],['q10','10 problems'],['q20','20 problems'],['q50','50 problems'],['free','Endless']];
+// Game mode is stored as 't<seconds>', 'q<problem count>' or 'free'.
+const TIME_OPTS = [1, 2, 5, 10, 15, 20];          // minutes
+const COUNT_OPTS = [10, 20, 50, 100];             // problems
+const LIMITS = { t: 60, q: 500 };                 // max for the "Other" box
+const modeLabel = m => m[0] === 't' ? (+m.slice(1) / 60) + ' min' : m[0] === 'q' ? m.slice(1) + ' problems' : 'Endless';
 const ALL_TABLES = [1,2,3,4,5,6,7,8,9,10,11,12];
 const DEFAULTS = { ops:['add','sub'], asDigits:[1], mdStyle:'tables', tables:[2,3,4,5,6,7,8,9,10], maxFactor:12,
-  longTop:[2], longBottom:[1], missing:false, negatives:false, stack:true, autoSubmit:false, focus:true, voice:false, mode:'t60' };
-const KEEP = ['mode','stack','autoSubmit','focus','voice'];
+  longTop:[2], longBottom:[1], missing:false, negatives:false, stack:true, autoSubmit:false, focus:true, voice:false, mode:'t60', lastT:'t60', lastQ:'q20' };
+const KEEP = ['mode','lastT','lastQ','stack','autoSubmit','focus','voice'];
 const PRESETS = [
   { name:'Single digits', ex:'8 + 6', set:{ops:['add','sub'], asDigits:[1]} },
   { name:'Two-digit', ex:'47 + 38', set:{ops:['add','sub'], asDigits:[2]} },
@@ -356,10 +370,30 @@ function renderSetup(){
     S.ops = Object.keys(OPS).filter(k => set.has(k));
   }, 'op');
 
-  chipRow($('#modes'), MODES, v => S.mode === v, v => S.mode = v);
-  $('#modeNote').textContent = S.mode[0] === 't' ? 'Answer as many as you can before time runs out.'
-    : S.mode[0] === 'q' ? 'Fixed set of problems. Your time is recorded.'
-    : 'No timer. Tap End when you are done.';
+  const kind = S.mode[0];
+  const ks = $('#modeKind'); ks.innerHTML = '';
+  [['t','Timed'],['q','Problems'],['f','Endless']].forEach(([v,l]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = l;
+    b.setAttribute('aria-pressed', kind === v);
+    b.addEventListener('click', () => { S.mode = v === 't' ? S.lastT : v === 'q' ? S.lastQ : 'free'; save(); renderSetup(); });
+    ks.appendChild(b);
+  });
+  $('#modeRow').hidden = kind === 'f';
+  if (kind === 't') chipRow($('#modes'), TIME_OPTS.map(m => ['t' + m*60, m + ' min']), v => S.mode === v, v => { S.mode = S.lastT = v; });
+  else if (kind === 'q') chipRow($('#modes'), COUNT_OPTS.map(n => ['q' + n, String(n)]), v => S.mode === v, v => { S.mode = S.lastQ = v; });
+  else $('#modes').innerHTML = '';
+  if (kind !== 'f'){
+    const cur = kind === 't' ? +S.mode.slice(1) / 60 : +S.mode.slice(1);
+    const custom = !(kind === 't' ? TIME_OPTS : COUNT_OPTS).includes(cur);
+    const inp = $('#customN');
+    inp.max = LIMITS[kind]; inp.placeholder = kind === 't' ? '30' : '25';
+    if (document.activeElement !== inp) inp.value = custom ? cur : '';
+    $('#customUnit').textContent = kind === 't' ? 'min' : 'problems';
+    $('#customBox').classList.toggle('on', custom);
+  }
+  $('#modeNote').textContent = kind === 't' ? `Answer as many as you can in ${modeLabel(S.mode)}.`
+    : kind === 'q' ? `${S.mode.slice(1)} problems. Your time is recorded.`
+    : 'No timer. Tap Finish when you are done.';
 
   const as = S.ops.includes('add') || S.ops.includes('sub');
   const md = S.ops.includes('mul') || S.ops.includes('div');
@@ -447,7 +481,7 @@ function describe(){
     parts.push(S.mdStyle === 'tables' ? `tables ${rangeText(S.tables)}` : `${S.longTop.join('/')} by ${S.longBottom.join('/')} digits`);
   }
   if (S.missing) parts.push('missing number');
-  return parts.join(' · ') + ' · ' + MODES.find(m => m[0] === S.mode)[1];
+  return parts.join(' · ') + ' · ' + modeLabel(S.mode);
 }
 function rangeText(arr){
   const out = []; let s = arr[0], p = arr[0];
@@ -821,6 +855,23 @@ document.addEventListener('keydown', e => {
 });
 
 $('#startBtn').addEventListener('click', () => start(null));
+// "Other" amount: update as you type; the box keeps focus because renderSetup leaves it alone while focused.
+$('#customN').addEventListener('input', e => {
+  const kind = S.mode[0]; if (kind === 'f') return;
+  let v = parseInt(e.target.value, 10);
+  if (!(v >= 1)) return;
+  v = Math.min(v, LIMITS[kind]);
+  S.mode = kind === 't' ? 't' + v * 60 : 'q' + v;
+  if (kind === 't') S.lastT = S.mode; else S.lastQ = S.mode;
+  save(); renderSetup();
+});
+$('#customN').addEventListener('change', e => {
+  const kind = S.mode[0]; if (kind === 'f') return;
+  const v = parseInt(e.target.value, 10);
+  if (v > LIMITS[kind]) e.target.value = LIMITS[kind];
+  renderSetup();
+});
+$('#customN').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
 $('#endBtn').addEventListener('click', () => finish());
 $('#micBtn').addEventListener('click', () => {
   if (voice.state === 'idle'){ S.voice = true; startVoice(); }
